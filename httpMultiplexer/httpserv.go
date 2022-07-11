@@ -23,25 +23,15 @@ type Multi struct {
 
 func (mult *Multi) urlsHandler(rw http.ResponseWriter, r *http.Request, jurls *jsonurl, ctx context.Context, handlereturn chan string) {
 	if len(jurls.URLS) > int(mult.maxurls) {
-		fmt.Println(mult.maxurls)
 		mult.printResponeError(rw, errors.New(fmt.Sprintf("Max urls in this server:%v", mult.maxurls)))
+		close(handlereturn)
 		return
 	}
 	for i := 0; i < len(jurls.URLS); i++ {
 		fmt.Println(jurls.URLS[i])
 	}
-	ch := make(chan bool)
-	go func() {
-		time.Sleep(13 * time.Second)
-		ch <- true
-	}()
-	select {
-	case <-ctx.Done():
-		return
-	case <-ch:
-		fmt.Println("yay")
-		rw.Write([]byte("ss"))
-	}
+	handlereturn <- "heh"
+	close(handlereturn)
 }
 
 func (mult *Multi) HandleHttp(rw http.ResponseWriter, r *http.Request, ctx context.Context, handlereturn chan string) {
@@ -49,18 +39,20 @@ func (mult *Multi) HandleHttp(rw http.ResponseWriter, r *http.Request, ctx conte
 	readbyte, err := io.ReadAll(r.Body)
 	if err != nil {
 		mult.printResponeError(rw, err)
+		close(handlereturn)
 		return
 	}
 	var urls jsonurl
 	if err := json.Unmarshal(readbyte, &urls); err != nil {
 		mult.printResponeError(rw, err)
+		close(handlereturn)
 		return
 	}
 	mult.urlsHandler(rw, r, &urls, ctx, handlereturn)
-	defer mult.parent.DonePost()
 }
 
 func (mult *Multi) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	defer mult.parent.DonePost()
 	if r.Method != "POST" {
 		mult.printResponeError(rw, errors.New("The server only accepts POST requests."))
 		return
@@ -95,7 +87,6 @@ func (mult *Multi) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 func (mult *Multi) printResponeError(rw http.ResponseWriter, err error) {
 	rw.Write([]byte("Error:" + err.Error()))
-	mult.parent.DonePost()
 }
 
 type httpMultiplexer struct {
@@ -107,7 +98,9 @@ type httpMultiplexer struct {
 }
 
 func (hsr *httpMultiplexer) DonePost() {
-	hsr.thisPost = hsr.thisPost - 1
+	if hsr.thisPost > 0 {
+		hsr.thisPost = hsr.thisPost - 1
+	}
 }
 
 func (hsr *httpMultiplexer) AddPost() error {
