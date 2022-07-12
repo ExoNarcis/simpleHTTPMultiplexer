@@ -10,15 +10,48 @@ import (
 	"time"
 )
 
+type jsonGet struct {
+	Url    string
+	Header string
+	Body   string
+}
+
 type jsonurl struct {
 	URLS []string
 }
 
 type Multi struct {
-	parent     *httpMultiplexer
-	httpclient *http.Client
-	maxurls    uint
-	TimeOut    time.Duration
+	MaxPostCount  uint
+	MaxGetCount   uint
+	thisPost      uint
+	ClientTimeOut time.Duration
+	TimeOut       time.Duration
+	parent        *httpMultiplexer
+	maxurls       uint
+}
+
+func (mult *Multi) genGeneralChannels(urls []string, ctx context.Context, resultchan chan string, errorchan chan error) {
+	var RequestChannes []chan string
+	urlslen := len(urls)
+	if urlslen >= int(mult.MaxGetCount) {
+		RequestChannes = make([]chan string, mult.MaxGetCount)
+		defer savechancloseAll(RequestChannes)
+		for i := 0; i < int(mult.MaxGetCount); i++ {
+			RequestChannes = append(RequestChannes, make(chan string))
+		}
+		for i := 0; i < urlslen; i += int(mult.MaxGetCount) {
+			fmt.Println(urls[i : i+int(mult.MaxGetCount)])
+		}
+	} else {
+		RequestChannes = make([]chan string, urlslen)
+		defer savechancloseAll(RequestChannes)
+		for i := 0; i < urlslen; i++ {
+			RequestChannes = append(RequestChannes, make(chan string))
+		}
+		for i := 0; i < urlslen; i++ {
+			fmt.Println(urls[i])
+		}
+	}
 }
 
 func (mult *Multi) urlsHandler(rw http.ResponseWriter, r *http.Request, jurls *jsonurl, ctx context.Context, handlereturn chan string) {
@@ -27,16 +60,26 @@ func (mult *Multi) urlsHandler(rw http.ResponseWriter, r *http.Request, jurls *j
 		close(handlereturn)
 		return
 	}
-	for i := 0; i < len(jurls.URLS); i++ {
-		fmt.Println(jurls.URLS[i])
+	errequesr := make(chan error)
+	defer savechanclose(errequesr)
+	result := make(chan string)
+	defer savechanclose(result)
+	go mult.genGeneralChannels(jurls.URLS, ctx, result, errequesr)
+	select {
+	case <-ctx.Done():
+		return
+	case err := <-errequesr:
+		mult.printResponeError(rw, err)
+		close(handlereturn)
+	case requerstreturn := <-result:
+		handlereturn <- requerstreturn
+		return
 	}
-	handlereturn <- "heh"
-	close(handlereturn)
 }
 
 func (mult *Multi) HandleHttp(rw http.ResponseWriter, r *http.Request, ctx context.Context, handlereturn chan string) {
-	defer r.Body.Close()
 	readbyte, err := io.ReadAll(r.Body)
+	r.Body.Close()
 	if err != nil {
 		mult.printResponeError(rw, err)
 		close(handlereturn)
@@ -51,69 +94,65 @@ func (mult *Multi) HandleHttp(rw http.ResponseWriter, r *http.Request, ctx conte
 	mult.urlsHandler(rw, r, &urls, ctx, handlereturn)
 }
 
-func (mult *Multi) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	defer mult.parent.DonePost()
+func (mult *Multi) checkreques(r *http.Request) error {
 	if r.Method != "POST" {
-		mult.printResponeError(rw, errors.New("The server only accepts POST requests."))
-		return
+		return errors.New("The server only accepts POST requests.")
 	}
-	if err := mult.parent.AddPost(); err != nil {
+	if err := mult.AddPost(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (mult *Multi) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	defer mult.DonePost()
+	if err := mult.checkreques(r); err != nil {
 		mult.printResponeError(rw, err)
 		return
 	}
 	handlereturn := make(chan string)
-	ctx, cancelCtx := context.WithCancel(r.Context())
+	defer savechanclose(handlereturn)
+	ctx, cancelCtx := context.WithTimeout(r.Context(), mult.TimeOut)
 	go mult.HandleHttp(rw, r, ctx, handlereturn)
-	timeout := make(chan bool)
-	go func() {
-		time.Sleep(mult.TimeOut)
-		timeout <- true
-	}()
 	select {
 	case <-r.Context().Done():
 		cancelCtx()
-		return
-	case <-timeout:
-		cancelCtx()
+	case <-ctx.Done():
 		mult.printResponeError(rw, errors.New("Server Timeout"))
-		return
-	case out, closed := <-handlereturn:
-		if !closed {
-			return
+	case out, notclosed := <-handlereturn:
+		if notclosed {
+			rw.Write([]byte(out))
 		}
-		rw.Write([]byte(out))
 	}
+	return
 }
 
 func (mult *Multi) printResponeError(rw http.ResponseWriter, err error) {
 	rw.Write([]byte("Error:" + err.Error()))
 }
 
-type httpMultiplexer struct {
-	httpserv     *http.Server
-	MaxPostCount uint
-	MaxGetCount  uint
-	thisPost     uint
-	multiplex    *Multi
-}
-
-func (hsr *httpMultiplexer) DonePost() {
-	if hsr.thisPost > 0 {
-		hsr.thisPost = hsr.thisPost - 1
+func (mult *Multi) DonePost() {
+	if mult.thisPost > 0 {
+		mult.thisPost = mult.thisPost - 1
 	}
 }
 
-func (hsr *httpMultiplexer) AddPost() error {
-	if hsr.thisPost+1 > hsr.MaxPostCount {
+func (mult *Multi) AddPost() error {
+	if mult.thisPost+1 > mult.MaxPostCount {
 		return errors.New("Http Post Limit")
 	}
-	hsr.thisPost = hsr.thisPost + 1
+	mult.thisPost = mult.thisPost + 1
 	return nil
 }
 
+type httpMultiplexer struct {
+	httpserv  *http.Server
+	multiplex *Multi
+}
+
 func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls uint) {
-	hsr.MaxPostCount = maxPostCount
-	hsr.MaxGetCount = maxGetCount
+	hsr.multiplex.MaxPostCount = maxPostCount
+	hsr.multiplex.MaxGetCount = maxGetCount
 	hsr.multiplex.maxurls = maxurls
 	hsr.httpserv.Handler = hsr.multiplex
 	hsr.httpserv.ListenAndServe()
@@ -123,9 +162,27 @@ func NewhttpMultiplexer(port string, serverTimeout uint, clientTimeout uint) *ht
 	NewMultiplexer := &httpMultiplexer{
 		httpserv: &http.Server{Addr: "localhost:" + port},
 		multiplex: &Multi{
-			httpclient: &http.Client{
-				Timeout: time.Duration(clientTimeout) * time.Second},
-			TimeOut: time.Duration(serverTimeout) * time.Second}}
+			ClientTimeOut: time.Duration(clientTimeout) * time.Second,
+			TimeOut:       time.Duration(serverTimeout) * time.Second}}
 	NewMultiplexer.multiplex.parent = NewMultiplexer
 	return NewMultiplexer
+}
+
+func savechanclose[T any](channel chan T) {
+	defer func() {
+		recover()
+	}()
+	select {
+	case _, notclosed := <-channel:
+		if notclosed {
+			close(channel)
+		}
+	default:
+		close(channel)
+	}
+}
+func savechancloseAll[T any](channel []chan T) {
+	for i := 0; i < len(channel); i++ {
+		savechanclose(channel[i])
+	}
 }
