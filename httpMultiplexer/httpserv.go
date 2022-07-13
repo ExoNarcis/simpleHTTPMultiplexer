@@ -70,7 +70,7 @@ func (mult *Multi) httpGetCl(urls []string, ctx context.Context, myrequest chan 
 	close(myrequest)
 }
 
-func (mult *Multi) getforchannels(resultchan chan string, RequestChannes []chan string, urlcount int) {
+func (mult *Multi) getforchannels(ctx context.Context, resultchan chan string, RequestChannes []chan string, urlcount int) {
 	var fullstring string
 	var count int
 	if urlcount%int(mult.MaxGetCount) != 0 {
@@ -80,10 +80,22 @@ func (mult *Multi) getforchannels(resultchan chan string, RequestChannes []chan 
 	}
 	for i := 0; i < count; i++ {
 		for _, v := range RequestChannes {
-			fullstring = fullstring + <-v
+			select {
+			case <-ctx.Done():
+				return
+			case value := <-v:
+				fullstring = fullstring + value
+			}
+
 		}
 	}
-	resultchan <- fullstring
+	select {
+	case <-ctx.Done():
+		return
+	default:
+		resultchan <- fullstring
+	}
+
 }
 
 func (mult *Multi) genGeneralChannels(urls []string, ctx context.Context, resultchan chan string, errorchan chan error) {
@@ -95,7 +107,7 @@ func (mult *Multi) genGeneralChannels(urls []string, ctx context.Context, result
 			RequestChannes = append(RequestChannes, make(chan string))
 		}
 		k := 0
-		go mult.getforchannels(getter, RequestChannes, urlslen)
+		go mult.getforchannels(ctx, getter, RequestChannes, urlslen)
 		for i := 0; i < urlslen; i += urlslen / int(mult.MaxGetCount) {
 			if k+1 == int(mult.MaxGetCount) {
 				go mult.httpGetCl(urls[i:], ctx, RequestChannes[k], errorchan)
