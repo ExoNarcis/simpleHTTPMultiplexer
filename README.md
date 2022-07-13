@@ -7,10 +7,10 @@
 ### сервер не принимает запрос если количество url в в нем больше чем указано в методе Init (maxurls)
 ### сервер не обслуживает больше чем указанное в Init одновременных входящих http-запросов (maxPostCount)
 ### таймаут на обработку одного входящего запроса указывается в вызове NewhttpMultiplexer (serverTimeout)
-### для каждого входящего запроса n исходяших указанных в Init (maxGetCount)
+### для каждого входящего запроса есть ограничение на n исходящих указанно в Init (maxGetCount)
 ### таймаут на запрос одного url указывается в NewhttpMultiplexer (clientTimeout)
 ### обработка запроса может быть отменена клиентом в любой момент, это должно повлечь за собой остановку всех операций связанных с этим запросом   
-### сервис поддерживаеть 'graceful shutdown': при получении сигнала от OS перестать принимать входящие запросы, завершить текущие запросы и остановиться усли в Init указан true (saveshutdown)  
+### сервис поддерживает 'graceful shutdown': при получении сигнала от OS перестает принимать входящие запросы, завершает текущие запросы и остановиться усли в Init указан true (saveshutdown)  
 
 #### NewhttpMultiplexer(port string, serverTimeout uint, clientTimeout uint)
 #### (... *httpMultiplexer)Init(maxPostCount uint, maxGetCount uint, maxurls uint, saveshutdown bool)
