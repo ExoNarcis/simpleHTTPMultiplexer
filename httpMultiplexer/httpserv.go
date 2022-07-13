@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/signal"
 	"time"
 )
 
@@ -30,27 +32,93 @@ type Multi struct {
 	maxurls       uint
 }
 
+func (mult *Multi) httpGetCl(urls []string, ctx context.Context, myrequest chan string, errorchan chan error) {
+	for i := 0; i < len(urls); i++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			ctxd, _ := context.WithTimeout(ctx, mult.ClientTimeOut)
+			req, err := http.NewRequestWithContext(ctxd, http.MethodGet, urls[i], nil)
+			if err != nil {
+				errorchan <- err
+				return
+			}
+			var resp *http.Response
+			resp, err = http.DefaultClient.Do(req)
+			if err != nil {
+				errorchan <- err
+				return
+			}
+			var bytesresp []byte
+			bytesresp, err = io.ReadAll(resp.Body)
+			if err != nil {
+				errorchan <- err
+				return
+			}
+			defer resp.Body.Close()
+			jsong := &jsonGet{Url: urls[i], Header: resp.Header.Get("User-Agent"), Body: string(bytesresp)}
+			var out []byte
+			out, err = json.Marshal(jsong)
+			if err != nil {
+				errorchan <- err
+				return
+			}
+			myrequest <- string(out)
+		}
+	}
+	close(myrequest)
+}
+
+func (mult *Multi) getforchannels(resultchan chan string, RequestChannes []chan string, urlcount int) {
+	var fullstring string
+	var count int
+	if urlcount%int(mult.MaxGetCount) != 0 {
+		count = (urlcount / int(mult.MaxGetCount)) + 1
+	} else {
+		count = urlcount / int(mult.MaxGetCount)
+	}
+	for i := 0; i < count; i++ {
+		for _, v := range RequestChannes {
+			fullstring = fullstring + <-v
+		}
+	}
+	resultchan <- fullstring
+}
+
 func (mult *Multi) genGeneralChannels(urls []string, ctx context.Context, resultchan chan string, errorchan chan error) {
 	var RequestChannes []chan string
 	urlslen := len(urls)
+	getter := make(chan string)
 	if urlslen >= int(mult.MaxGetCount) {
-		RequestChannes = make([]chan string, mult.MaxGetCount)
-		defer savechancloseAll(RequestChannes)
 		for i := 0; i < int(mult.MaxGetCount); i++ {
 			RequestChannes = append(RequestChannes, make(chan string))
 		}
-		for i := 0; i < urlslen; i += int(mult.MaxGetCount) {
-			fmt.Println(urls[i : i+int(mult.MaxGetCount)])
+		k := 0
+		go mult.getforchannels(getter, RequestChannes, urlslen)
+		for i := 0; i < urlslen; i += urlslen / int(mult.MaxGetCount) {
+			if k+1 == int(mult.MaxGetCount) {
+				go mult.httpGetCl(urls[i:], ctx, RequestChannes[k], errorchan)
+				break
+			} else {
+				go mult.httpGetCl(urls[i:i+(urlslen/int(mult.MaxGetCount))], ctx, RequestChannes[k], errorchan)
+			}
+			k++
 		}
 	} else {
-		RequestChannes = make([]chan string, urlslen)
-		defer savechancloseAll(RequestChannes)
 		for i := 0; i < urlslen; i++ {
 			RequestChannes = append(RequestChannes, make(chan string))
 		}
+		go mult.getforchannels(getter, RequestChannes, urlslen)
 		for i := 0; i < urlslen; i++ {
-			fmt.Println(urls[i])
+			go mult.httpGetCl(urls[i:i], ctx, RequestChannes[i], errorchan)
 		}
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case fullstr := <-getter:
+		resultchan <- fullstr
 	}
 }
 
@@ -64,16 +132,16 @@ func (mult *Multi) urlsHandler(rw http.ResponseWriter, r *http.Request, jurls *j
 	defer savechanclose(errequesr)
 	result := make(chan string)
 	defer savechanclose(result)
-	go mult.genGeneralChannels(jurls.URLS, ctx, result, errequesr)
+	ctxe, cansele := context.WithCancel(ctx)
+	go mult.genGeneralChannels(jurls.URLS, ctxe, result, errequesr)
 	select {
 	case <-ctx.Done():
-		return
 	case err := <-errequesr:
+		cansele()
 		mult.printResponeError(rw, err)
 		close(handlereturn)
 	case requerstreturn := <-result:
 		handlereturn <- requerstreturn
-		return
 	}
 }
 
@@ -111,7 +179,6 @@ func (mult *Multi) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handlereturn := make(chan string)
-	defer savechanclose(handlereturn)
 	ctx, cancelCtx := context.WithTimeout(r.Context(), mult.TimeOut)
 	go mult.HandleHttp(rw, r, ctx, handlereturn)
 	select {
@@ -122,9 +189,9 @@ func (mult *Multi) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	case out, notclosed := <-handlereturn:
 		if notclosed {
 			rw.Write([]byte(out))
+			savechanclose(handlereturn)
 		}
 	}
-	return
 }
 
 func (mult *Multi) printResponeError(rw http.ResponseWriter, err error) {
@@ -150,12 +217,27 @@ type httpMultiplexer struct {
 	multiplex *Multi
 }
 
-func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls uint) {
+func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls uint, saveshutdown bool) {
 	hsr.multiplex.MaxPostCount = maxPostCount
 	hsr.multiplex.MaxGetCount = maxGetCount
 	hsr.multiplex.maxurls = maxurls
 	hsr.httpserv.Handler = hsr.multiplex
-	hsr.httpserv.ListenAndServe()
+	idleConnsClosed := make(chan struct{})
+	if saveshutdown {
+		go func() {
+			osSig := make(chan os.Signal)
+			signal.Notify(osSig, os.Interrupt)
+			<-osSig
+			if err := hsr.httpserv.Shutdown(context.Background()); err != nil {
+				fmt.Println("HTTP SERVER SHUTDOWN ERR:" + err.Error())
+			}
+			close(idleConnsClosed)
+		}()
+	}
+	if err := hsr.httpserv.ListenAndServe(); err != http.ErrServerClosed {
+		fmt.Println("HTTP SERVER ERR:" + err.Error())
+	}
+	<-idleConnsClosed
 }
 
 func NewhttpMultiplexer(port string, serverTimeout uint, clientTimeout uint) *httpMultiplexer {
