@@ -95,7 +95,6 @@ func (mult *Multi) getforchannels(ctx context.Context, resultchan chan string, R
 	default:
 		resultchan <- fullstring
 	}
-
 }
 
 func (mult *Multi) genGeneralChannels(urls []string, ctx context.Context, resultchan chan string, errorchan chan error) {
@@ -121,7 +120,7 @@ func (mult *Multi) genGeneralChannels(urls []string, ctx context.Context, result
 		for i := 0; i < urlslen; i++ {
 			RequestChannes = append(RequestChannes, make(chan string))
 		}
-		go mult.getforchannels(getter, RequestChannes, urlslen)
+		go mult.getforchannels(ctx, getter, RequestChannes, urlslen)
 		for i := 0; i < urlslen; i++ {
 			go mult.httpGetCl(urls[i:i], ctx, RequestChannes[i], errorchan)
 		}
