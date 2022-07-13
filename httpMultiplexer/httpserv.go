@@ -236,6 +236,7 @@ func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls ui
 	}
 	if err := hsr.httpserv.ListenAndServe(); err != http.ErrServerClosed {
 		fmt.Println("HTTP SERVER ERR:" + err.Error())
+		close(idleConnsClosed)
 	}
 	<-idleConnsClosed
 }
