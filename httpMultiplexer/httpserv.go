@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 )
 
@@ -101,20 +102,15 @@ func (mult *Multi) genGeneralChannels(urls []string, ctx context.Context, result
 	var RequestChannes []chan string
 	urlslen := len(urls)
 	getter := make(chan string)
-	if urlslen >= int(mult.MaxGetCount) {
+	if urlslen > int(mult.MaxGetCount) {
 		for i := 0; i < int(mult.MaxGetCount); i++ {
 			RequestChannes = append(RequestChannes, make(chan string))
 		}
-		k := 0
+		k := int(mult.MaxGetCount)
+		chanint := 0
 		go mult.getforchannels(ctx, getter, RequestChannes, urlslen)
-		for i := 0; i < urlslen; i += urlslen / int(mult.MaxGetCount) {
-			if k+1 == int(mult.MaxGetCount) {
-				go mult.httpGetCl(urls[i:], ctx, RequestChannes[k], errorchan)
-				break
-			} else {
-				go mult.httpGetCl(urls[i:i+(urlslen/int(mult.MaxGetCount))], ctx, RequestChannes[k], errorchan)
-			}
-			k++
+		for i := 0; i < urlslen; k, i, chanint = k-1, i+(urlslen-i)/k, chanint+1 {
+			go mult.httpGetCl(urls[i:i+(urlslen-i)/k], ctx, RequestChannes[chanint], errorchan)
 		}
 	} else {
 		for i := 0; i < urlslen; i++ {
@@ -122,7 +118,7 @@ func (mult *Multi) genGeneralChannels(urls []string, ctx context.Context, result
 		}
 		go mult.getforchannels(ctx, getter, RequestChannes, urlslen)
 		for i := 0; i < urlslen; i++ {
-			go mult.httpGetCl(urls[i:i], ctx, RequestChannes[i], errorchan)
+			go mult.httpGetCl(urls[i:i+1], ctx, RequestChannes[i], errorchan)
 		}
 	}
 	select {
@@ -147,6 +143,7 @@ func (mult *Multi) urlsHandler(rw http.ResponseWriter, r *http.Request, jurls *j
 	go mult.genGeneralChannels(jurls.URLS, ctxe, result, errequesr)
 	select {
 	case <-ctx.Done():
+		return
 	case err := <-errequesr:
 		cansele()
 		mult.printResponeError(rw, err)
@@ -233,8 +230,9 @@ func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls ui
 	hsr.multiplex.MaxGetCount = maxGetCount
 	hsr.multiplex.maxurls = maxurls
 	hsr.httpserv.Handler = hsr.multiplex
-	idleConnsClosed := make(chan struct{})
+	var save sync.WaitGroup
 	if saveshutdown {
+		save.Add(1)
 		go func() {
 			osSig := make(chan os.Signal)
 			signal.Notify(osSig, os.Interrupt)
@@ -242,14 +240,13 @@ func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls ui
 			if err := hsr.httpserv.Shutdown(context.Background()); err != nil {
 				fmt.Println("HTTP SERVER SHUTDOWN ERR:" + err.Error())
 			}
-			close(idleConnsClosed)
+			save.Done()
 		}()
 	}
 	if err := hsr.httpserv.ListenAndServe(); err != http.ErrServerClosed {
 		fmt.Println("HTTP SERVER ERR:" + err.Error())
-		close(idleConnsClosed)
 	}
-	<-idleConnsClosed
+	save.Wait()
 }
 
 func NewhttpMultiplexer(port string, serverTimeout uint, clientTimeout uint) *httpMultiplexer {
