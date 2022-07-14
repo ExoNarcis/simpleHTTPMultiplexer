@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -33,43 +34,51 @@ type Multi struct {
 	maxurls       uint
 }
 
+func (mult *Multi) httpGet(ctx context.Context, url string) (*http.Response, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	var resp *http.Response
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	var bytesresp []byte
+	bytesresp, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	return resp, string(bytesresp), nil
+}
+
 func (mult *Multi) httpGetCl(urls []string, ctx context.Context, myrequest chan string, errorchan chan error) {
+	defer close(myrequest)
+	defer func() {
+		recover()
+	}()
 	for i := 0; i < len(urls); i++ {
 		ctxd, _ := context.WithTimeout(ctx, mult.ClientTimeOut)
-		req, err := http.NewRequestWithContext(ctxd, http.MethodGet, urls[i], nil)
+		resp, body, err := mult.httpGet(ctxd, urls[i])
 		if err != nil {
 			errorchan <- err
-			return
+			break
 		}
-		var resp *http.Response
-		resp, err = http.DefaultClient.Do(req)
-		if err != nil {
-			errorchan <- err
-			return
-		}
-		var bytesresp []byte
-		bytesresp, err = io.ReadAll(resp.Body)
-		if err != nil {
-			errorchan <- err
-			return
-		}
-		defer resp.Body.Close()
-		jsong := &jsonGet{Url: urls[i], Header: resp.Header.Get("User-Agent"), Body: string(bytesresp)}
+		jsong := &jsonGet{Url: urls[i], Header: resp.Header.Get("User-Agent"), Body: body}
 		var out []byte
 		out, err = json.Marshal(jsong)
 		if err != nil {
 			errorchan <- err
-			return
+			break
 		}
 		select {
 		case <-ctx.Done():
-			close(myrequest)
-			return
+			break
 		default:
 			myrequest <- string(out)
 		}
 	}
-	close(myrequest)
 }
 
 func (mult *Multi) getforchannels(ctx context.Context, resultchan chan string, RequestChannes []chan string, urlcount int) {
@@ -144,15 +153,16 @@ func (mult *Multi) urlsHandler(rw http.ResponseWriter, r *http.Request, jurls *j
 	defer savechanclose(errequesr)
 	result := make(chan string)
 	defer savechanclose(result)
-	ctxe, cansele := context.WithCancel(ctx)
+	ctxe, cancelF := context.WithCancel(ctx)
 	go mult.genGeneralChannels(jurls.URLS, ctxe, result, errequesr)
 	select {
 	case <-ctx.Done():
 		return
 	case err := <-errequesr:
-		cansele()
+		cancelF()
 		mult.printResponeError(rw, err)
 		close(handlereturn)
+		return
 	case requerstreturn := <-result:
 		handlereturn <- requerstreturn
 	}
@@ -197,8 +207,10 @@ func (mult *Multi) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	select {
 	case <-r.Context().Done():
 		cancelCtx()
+		return
 	case <-ctx.Done():
 		mult.printResponeError(rw, errors.New("Server Timeout"))
+		return
 	case out, notclosed := <-handlereturn:
 		if notclosed {
 			rw.Write([]byte(out))
@@ -236,8 +248,8 @@ func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls ui
 	hsr.multiplex.maxurls = maxurls
 	hsr.httpserv.Handler = hsr.multiplex
 	var save sync.WaitGroup
+	save.Add(1)
 	if saveshutdown {
-		save.Add(1)
 		go func() {
 			osSig := make(chan os.Signal)
 			signal.Notify(osSig, os.Interrupt)
@@ -250,6 +262,7 @@ func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls ui
 	}
 	if err := hsr.httpserv.ListenAndServe(); err != http.ErrServerClosed {
 		fmt.Println("HTTP SERVER ERR:" + err.Error())
+		save.Done()
 	}
 	save.Wait()
 }
