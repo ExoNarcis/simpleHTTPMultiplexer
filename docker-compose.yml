@@ -1,0 +1,9 @@
+
+version: "3"
+
+services:
+
+    httpmulti:
+        build: ./
+        ports:
+            - 7070:8080

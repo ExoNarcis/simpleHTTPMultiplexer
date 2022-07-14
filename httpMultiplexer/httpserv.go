@@ -259,6 +259,7 @@ func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls ui
 			save.Done()
 		}()
 	}
+	fmt.Println("STARTING HTTP SERVER")
 	if err := hsr.httpserv.ListenAndServe(); err != http.ErrServerClosed {
 		fmt.Println("HTTP SERVER ERR:" + err.Error())
 		save.Done()
@@ -268,7 +269,7 @@ func (hsr *httpMultiplexer) Init(maxPostCount uint, maxGetCount uint, maxurls ui
 
 func NewhttpMultiplexer(port string, serverTimeout uint, clientTimeout uint) *httpMultiplexer {
 	NewMultiplexer := &httpMultiplexer{
-		httpserv: &http.Server{Addr: "localhost:" + port},
+		httpserv: &http.Server{Addr: ":" + port},
 		multiplex: &Multi{
 			ClientTimeOut: time.Duration(clientTimeout) * time.Second,
 			TimeOut:       time.Duration(serverTimeout) * time.Second}}

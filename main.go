@@ -5,6 +5,6 @@ import (
 )
 
 func main() {
-	Serv := httpMultiplexer.NewhttpMultiplexer("3333", 10, 1)
+	Serv := httpMultiplexer.NewhttpMultiplexer("8080", 10, 1)
 	Serv.Init(100, 4, 20, true)
 }

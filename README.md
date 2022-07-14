@@ -23,13 +23,13 @@ import (
 )
 
 func main() {
-	Serv := httpMultiplexer.NewhttpMultiplexer("3333", 10, 1)
+	Serv := httpMultiplexer.NewhttpMultiplexer("8080", 10, 1)
 	Serv.Init(100, 4, 20, true)
 }
 ```
 
 #### Пример POST запроса:
-http://localhost:3333/
+http://localhost:8080/
 Body(RAW):
 ```
 {"urls":["https://www.google.com/search?q=1","https://www.google.com/search?q=2","https://www.google.com/search?q=3","https://www.google.com/search?q=4","https://www.google.com/search?q=5","https://www.google.com/search?q=6","https://www.google.com/search?q=7","https://www.google.com/search?q=8","https://www.google.com/search?q=8","https://www.google.com/search?q=9","https://www.google.com/search?q=10","https://www.google.com/search?q=11","https://www.google.com/search?q=12","https://www.google.com/search?q=13"]}
@@ -38,3 +38,20 @@ Body(RAW):
 ```
 [{"Url":"*","Header":"*","Body":"*"},{"Url":"*","Header":"*","Body":"*"},...]
 ```
+#### DOCKER SETUP (Classic):
+```
+docker build --tag pet2 ./  
+docker run pet2  
+```
+
+####  DOCKER-COMPOSE:
+```
+docker-compose build
+docker-compose up 
+```
+
+#### Известные проблеммы с DOCKER:
+docker0 Bridge не получает IP адреса/нет доступа к Интернету в контейнерах:
+[wiki.archlinux.org](https://wiki.archlinux.org/title/Docker_(%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9)#docker0_Bridge_%D0%BD%D0%B5_%D0%BF%D0%BE%D0%BB%D1%83%D1%87%D0%B0%D0%B5%D1%82_IP_%D0%B0%D0%B4%D1%80%D0%B5%D1%81%D0%B0/%D0%BD%D0%B5%D1%82_%D0%B4%D0%BE%D1%81%D1%82%D1%83%D0%BF%D0%B0_%D0%BA_%D0%98%D0%BD%D1%82%D0%B5%D1%80%D0%BD%D0%B5%D1%82%D1%83_%D0%B2_%D0%BA%D0%BE%D0%BD%D1%82%D0%B5%D0%B9%D0%BD%D0%B5%D1%80%D0%B0%D1%85)
+или 
+docker run --publish 8080:8080 pet2 
