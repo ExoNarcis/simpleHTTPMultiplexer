@@ -35,36 +35,37 @@ type Multi struct {
 
 func (mult *Multi) httpGetCl(urls []string, ctx context.Context, myrequest chan string, errorchan chan error) {
 	for i := 0; i < len(urls); i++ {
+		ctxd, _ := context.WithTimeout(ctx, mult.ClientTimeOut)
+		req, err := http.NewRequestWithContext(ctxd, http.MethodGet, urls[i], nil)
+		if err != nil {
+			errorchan <- err
+			return
+		}
+		var resp *http.Response
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			errorchan <- err
+			return
+		}
+		var bytesresp []byte
+		bytesresp, err = io.ReadAll(resp.Body)
+		if err != nil {
+			errorchan <- err
+			return
+		}
+		defer resp.Body.Close()
+		jsong := &jsonGet{Url: urls[i], Header: resp.Header.Get("User-Agent"), Body: string(bytesresp)}
+		var out []byte
+		out, err = json.Marshal(jsong)
+		if err != nil {
+			errorchan <- err
+			return
+		}
 		select {
 		case <-ctx.Done():
+			close(myrequest)
 			return
 		default:
-			ctxd, _ := context.WithTimeout(ctx, mult.ClientTimeOut)
-			req, err := http.NewRequestWithContext(ctxd, http.MethodGet, urls[i], nil)
-			if err != nil {
-				errorchan <- err
-				return
-			}
-			var resp *http.Response
-			resp, err = http.DefaultClient.Do(req)
-			if err != nil {
-				errorchan <- err
-				return
-			}
-			var bytesresp []byte
-			bytesresp, err = io.ReadAll(resp.Body)
-			if err != nil {
-				errorchan <- err
-				return
-			}
-			defer resp.Body.Close()
-			jsong := &jsonGet{Url: urls[i], Header: resp.Header.Get("User-Agent"), Body: string(bytesresp)}
-			var out []byte
-			out, err = json.Marshal(jsong)
-			if err != nil {
-				errorchan <- err
-				return
-			}
 			myrequest <- string(out)
 		}
 	}
