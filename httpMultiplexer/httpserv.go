@@ -72,7 +72,7 @@ func (mult *Multi) httpGetCl(urls []string, ctx context.Context, myrequest chan 
 }
 
 func (mult *Multi) getforchannels(ctx context.Context, resultchan chan string, RequestChannes []chan string, urlcount int) {
-	var fullstring string
+	fullstring := "["
 	var count int
 	if urlcount%int(mult.MaxGetCount) != 0 {
 		count = (urlcount / int(mult.MaxGetCount)) + 1
@@ -85,7 +85,11 @@ func (mult *Multi) getforchannels(ctx context.Context, resultchan chan string, R
 			case <-ctx.Done():
 				return
 			case value := <-v:
-				fullstring = fullstring + value
+				if fullstring != "[" {
+					fullstring = fullstring + "," + value
+				} else {
+					fullstring = fullstring + value
+				}
 			}
 
 		}
@@ -94,7 +98,7 @@ func (mult *Multi) getforchannels(ctx context.Context, resultchan chan string, R
 	case <-ctx.Done():
 		return
 	default:
-		resultchan <- fullstring
+		resultchan <- fullstring + "]"
 	}
 }
 

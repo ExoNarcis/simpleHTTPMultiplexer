@@ -27,3 +27,15 @@ func main() {
 	Serv.Init(100, 4, 20, true)
 }
 ```
+
+#### Пример POST запроса:
+http://localhost:3333/
+Body(RAW):
+```
+{"urls":["https://www.google.com/search?q=1","https://www.google.com/search?q=2","https://www.google.com/search?q=3","https://www.google.com/search?q=4","https://www.google.com/search?q=5","https://www.google.com/search?q=6","https://www.google.com/search?q=7","https://www.google.com/search?q=8","https://www.google.com/search?q=8","https://www.google.com/search?q=9","https://www.google.com/search?q=10","https://www.google.com/search?q=11","https://www.google.com/search?q=12","https://www.google.com/search?q=13"]}
+```
+#### Ответ будет по схеме:
+
+```
+[{"Url":"*","Header":"*","Body":"*"},{"Url":"*","Header":"*","Body":"*"},...]
+```
